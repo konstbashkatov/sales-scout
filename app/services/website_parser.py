@@ -13,6 +13,119 @@ logger = logging.getLogger(__name__)
 class WebsiteParser:
     """Парсер для извлечения контактов с сайтов"""
 
+    def extract_legal_info(self, url: str) -> Dict[str, str]:
+        """
+        Извлечение юридической информации с сайта (ИНН, название компании)
+
+        Args:
+            url: URL сайта компании
+
+        Returns:
+            Словарь с найденной информацией (inn, company_name)
+        """
+        if not url:
+            return {"inn": None, "company_name": None}
+
+        try:
+            logger.info(f"Извлечение юридической информации с сайта: {url}")
+
+            # Добавляем https:// если не указан протокол
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+
+            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+            response.raise_for_status()
+
+            html = response.text
+            text = BeautifulSoup(response.content, 'html.parser').get_text()
+
+            # Ищем ИНН
+            inn = self._extract_inn(text, html)
+
+            # Ищем название компании (ООО, АО, ИП и т.д.)
+            company_name = self._extract_company_name(text, html)
+
+            logger.info(f"Найдено на сайте: ИНН={inn}, Компания={company_name}")
+
+            return {
+                "inn": inn,
+                "company_name": company_name
+            }
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ошибка при парсинге сайта {url}: {e}")
+            return {"inn": None, "company_name": None}
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при извлечении юридической информации: {e}")
+            return {"inn": None, "company_name": None}
+
+    def _extract_inn(self, text: str, html: str) -> str:
+        """Извлечение ИНН из текста"""
+        # Паттерны для ИНН
+        patterns = [
+            # ИНН: 1234567890 или ИНН 1234567890
+            r'ИНН[:\s]*(\d{10,12})',
+            # INN: 1234567890
+            r'INN[:\s]*(\d{10,12})',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                inn = match.group(1)
+                # Проверяем что ИНН валидный (10 или 12 цифр)
+                if len(inn) in [10, 12]:
+                    return inn
+
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                inn = match.group(1)
+                if len(inn) in [10, 12]:
+                    return inn
+
+        return None
+
+    def _extract_company_name(self, text: str, html: str) -> str:
+        """Извлечение названия компании из текста"""
+        # Паттерны для названий компаний
+        patterns = [
+            # ООО «Название» или ООО "Название"
+            r'(ООО\s*[«"\'«][^»"\'»]+[»"\'»])',
+            # ООО Название (без кавычек, до конца строки или пробела)
+            r'(ООО\s+[А-ЯЁа-яё][А-ЯЁа-яё\s\-]+)',
+            # АО «Название»
+            r'(АО\s*[«"\'«][^»"\'»]+[»"\'»])',
+            # ЗАО «Название»
+            r'(ЗАО\s*[«"\'«][^»"\'»]+[»"\'»])',
+            # ПАО «Название»
+            r'(ПАО\s*[«"\'«][^»"\'»]+[»"\'»])',
+            # ИП Фамилия Имя Отчество
+            r'(ИП\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                # Очищаем от лишних пробелов
+                name = re.sub(r'\s+', ' ', name)
+                # Проверяем минимальную длину
+                if len(name) > 5:
+                    return name
+
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                name = re.sub(r'\s+', ' ', name)
+                if len(name) > 5:
+                    return name
+
+        return None
+
     def parse_contacts(self, url: str) -> Dict[str, List[str]]:
         """
         Извлечение контактов с сайта компании

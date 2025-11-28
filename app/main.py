@@ -134,21 +134,23 @@ async def bitrix_webhook(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse({"status": "ok"}, status_code=200)
 
 
-@app.get("/webhook/research")
+@app.api_route("/webhook/research", methods=["GET", "POST"])
 async def webhook_research_company(
+    request: Request,
+    background_tasks: BackgroundTasks,
     companyName: str = None,
     inn: str = None,
     userId: str = None,
     dealTitle: str = None,
     companyWebsite: str = None,
-    background_tasks: BackgroundTasks = None
+    dealId: str = None
 ):
     """
-    Webhook endpoint для исследования компании (GET запрос с параметрами в URL)
+    Webhook endpoint для исследования компании (GET и POST запросы)
 
     Пример использования:
     http://aistudy.dev.o2it.ru:8100/webhook/research?companyName=Яндекс&userId=10
-    http://aistudy.dev.o2it.ru:8100/webhook/research?companyName={{=Document:TITLE}}&dealTitle={{=Document:DEAL_TITLE}}&inn={{=Document:UF_CRM_INN}}&userId={{=Document:ASSIGNED_BY_ID}}
+    http://aistudy.dev.o2it.ru:8100/webhook/research?companyName={{=Document:TITLE}}&dealTitle={{=Document:DEAL_TITLE}}&inn={{=Document:UF_CRM_INN}}&userId={{=Document:ASSIGNED_BY_ID}}&dealId={{=Document:ID}}
 
     Args:
         companyName: Название компании (может быть None)
@@ -156,12 +158,26 @@ async def webhook_research_company(
         userId: ID пользователя Битрикс24 (обязательный)
         dealTitle: Название сделки (может быть None)
         companyWebsite: Сайт компании (может быть None)
+        dealId: ID сделки для добавления комментария (может быть None)
 
     Returns:
         Статус обработки
     """
+    # Для POST запросов параметры могут быть в теле
+    if request.method == "POST":
+        try:
+            # Пробуем получить данные из form-data
+            form_data = await request.form()
+            companyName = companyName or form_data.get("companyName")
+            inn = inn or form_data.get("inn")
+            userId = userId or form_data.get("userId")
+            dealTitle = dealTitle or form_data.get("dealTitle")
+            companyWebsite = companyWebsite or form_data.get("companyWebsite")
+            dealId = dealId or form_data.get("dealId")
+        except:
+            pass
     try:
-        logger.info(f"Webhook research: companyName={companyName}, inn={inn}, userId={userId}, dealTitle={dealTitle}, website={companyWebsite}")
+        logger.info(f"Webhook research: companyName={companyName}, inn={inn}, userId={userId}, dealTitle={dealTitle}, website={companyWebsite}, dealId={dealId}")
 
         # Проверка что указан userId
         if not userId:
@@ -169,6 +185,26 @@ async def webhook_research_company(
                 "status": "error",
                 "message": "Укажите userId"
             }, status_code=400)
+
+        # Извлекаем числовой ID из userId (может быть "user_314" или просто "314")
+        user_id_clean = userId.replace("user_", "") if userId.startswith("user_") else userId
+
+        # Очищаем companyName от лишних символов (фигурные скобки, кавычки)
+        if companyName:
+            companyName = companyName.strip('{}"\' ')
+
+        # Очищаем dealTitle от лишних кавычек
+        if dealTitle:
+            dealTitle = dealTitle.strip('{}"\' ')
+
+        # Очищаем inn - оставляем только цифры
+        if inn:
+            inn = ''.join(filter(str.isdigit, inn)) or None
+
+        # Очищаем dealId - оставляем только цифры
+        deal_id_clean = None
+        if dealId:
+            deal_id_clean = ''.join(filter(str.isdigit, dealId)) or None
 
         # Определяем что использовать для поиска
         search_query = companyName or dealTitle or inn
@@ -179,12 +215,23 @@ async def webhook_research_company(
                 "message": "Укажите хотя бы один параметр: companyName, dealTitle или inn"
             }, status_code=400)
 
+        # Очищаем companyWebsite от лишних символов
+        if companyWebsite:
+            companyWebsite = companyWebsite.strip('{}"\' ')
+            # Убираем пустые значения
+            if not companyWebsite or companyWebsite.lower() in ['null', 'none', '']:
+                companyWebsite = None
+
+        logger.info(f"Webhook research (очищено): search_query={search_query}, inn={inn}, user_id={user_id_clean}, deal_id={deal_id_clean}, website={companyWebsite}")
+
         # Запускаем обработку в фоне
         background_tasks.add_task(
             handle_direct_research_request,
             company_name=search_query if not inn else companyName,
             inn=inn,
-            user_id=userId
+            user_id=user_id_clean,
+            deal_id=deal_id_clean,
+            company_website=companyWebsite
         )
 
         return JSONResponse({

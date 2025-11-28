@@ -216,7 +216,7 @@ async def handle_feedback(dialog_id: str, feedback_type: str, webhook_data: Dict
         logger.error(f"Ошибка при обработке оценки: {e}", exc_info=True)
 
 
-async def handle_direct_research_request(company_name: str = None, inn: str = None, user_id: str = None):
+async def handle_direct_research_request(company_name: str = None, inn: str = None, user_id: str = None, deal_id: str = None, company_website: str = None):
     """
     Обработка прямого API запроса на исследование компании
 
@@ -224,9 +224,11 @@ async def handle_direct_research_request(company_name: str = None, inn: str = No
         company_name: Название компании
         inn: ИНН компании
         user_id: ID пользователя Битрикс24 для отправки результата
+        deal_id: ID сделки для добавления комментария с досье
+        company_website: Сайт компании (если известен)
     """
     try:
-        logger.info(f"Прямой API запрос: company_name={company_name}, inn={inn}, user_id={user_id}")
+        logger.info(f"Прямой API запрос: company_name={company_name}, inn={inn}, user_id={user_id}, deal_id={deal_id}, website={company_website}")
 
         if not user_id:
             logger.error("Отсутствует user_id в запросе")
@@ -243,10 +245,10 @@ async def handle_direct_research_request(company_name: str = None, inn: str = No
         # Создаем досье
         try:
             if inn:
-                dossier = await sales_analyzer.create_company_dossier(inn=inn)
+                dossier = await sales_analyzer.create_company_dossier(inn=inn, company_website=company_website)
                 feedback_id = inn
             else:
-                dossier = await sales_analyzer.create_company_dossier(company_name=company_name)
+                dossier = await sales_analyzer.create_company_dossier(company_name=company_name, company_website=company_website)
                 feedback_id = company_name
 
             # Отправляем досье
@@ -255,6 +257,14 @@ async def handle_direct_research_request(company_name: str = None, inn: str = No
                 dossier,
                 keyboard=None
             )
+
+            # Добавляем комментарий к сделке если указан deal_id
+            if deal_id and not dossier.startswith("❌") and not dossier.startswith("😔"):
+                try:
+                    bitrix_service.add_deal_comment(deal_id, dossier)
+                    logger.info(f"Досье добавлено как комментарий к сделке {deal_id}")
+                except Exception as e:
+                    logger.warning(f"Не удалось добавить комментарий к сделке {deal_id}: {e}")
 
             # Отправляем кнопки оценки
             if not dossier.startswith("❌") and not dossier.startswith("😔"):

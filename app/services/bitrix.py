@@ -188,6 +188,46 @@ class BitrixService:
         # В Битрикс24 это происходит автоматически при длительной обработке
         pass
 
+    def add_deal_comment(self, deal_id: str, comment: str) -> Dict:
+        """
+        Добавление комментария к сделке в CRM Битрикс24
+
+        Args:
+            deal_id: ID сделки
+            comment: Текст комментария
+
+        Returns:
+            Ответ от API Битрикс24
+        """
+        url = f"{self.webhook_url}/crm.timeline.comment.add.json"
+
+        params = {
+            "fields": {
+                "ENTITY_ID": deal_id,
+                "ENTITY_TYPE": "deal",
+                "COMMENT": comment
+            }
+        }
+
+        try:
+            logger.info(f"Добавление комментария к сделке {deal_id}")
+
+            response = requests.post(url, json=params, timeout=30)
+            response.raise_for_status()
+
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Ошибка API Битрикс24 при добавлении комментария: {result}")
+                raise Exception(f"Bitrix24 API error: {result.get('error_description', result.get('error'))}")
+
+            logger.info(f"Комментарий к сделке {deal_id} успешно добавлен: comment_id={result.get('result')}")
+            return result
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка добавления комментария к сделке {deal_id}: {e}")
+            raise
+
 
 # Глобальный экземпляр сервиса
 bitrix_service = BitrixService()
