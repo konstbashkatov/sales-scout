@@ -146,8 +146,13 @@ class SalesAnalyzer:
         # ШАГ 4: ПАРСИНГ КОНТАКТОВ С САЙТА
         logger.info("Шаг 4/6: Парсинг контактов с сайта")
         website_contacts = {}
+        website_legal_info = {}
         if online_presence.get("website"):
             website_contacts = website_parser.parse_contacts(online_presence["website"])
+            # Также извлекаем юридическую информацию с сайта (ИНН, название)
+            website_legal_info = website_parser.extract_legal_info(online_presence["website"])
+            if website_legal_info:
+                logger.info(f"Юридическая информация с сайта: {website_legal_info}")
 
         # ШАГ 5: ПОИСК ЛПР И БИЗНЕС-ИНФОРМАЦИИ
         logger.info("Шаг 5/6: Поиск ЛПР и бизнес-информации (Perplexity)")
@@ -167,6 +172,7 @@ class SalesAnalyzer:
             "egrul": egrul_data,
             "online_presence": online_presence,
             "website_contacts": website_contacts,
+            "website_legal_info": website_legal_info,
             "executives": executives_data,
             "business_info": business_info,
             "news_and_events": news_and_events
