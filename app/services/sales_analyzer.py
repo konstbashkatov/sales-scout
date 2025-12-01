@@ -50,83 +50,100 @@ class SalesAnalyzer:
         if not inn and not company_name and not company_website:
             return "❌ Укажите ИНН, название компании или сайт"
 
-        query = inn if inn else company_name
+        query = inn or company_name or company_website
         logger.info(f"Начало создания досье для: {query}, сайт: {company_website}")
 
-        # ШАГ 0: ЕСЛИ ЕСТЬ САЙТ - ПАРСИМ ЕГО ДЛЯ ОПРЕДЕЛЕНИЯ ЮРЛИЦА
-        if company_website and not inn:
+        # =================================================================
+        # ЭТАП 1: ИДЕНТИФИКАЦИЯ КОМПАНИИ
+        # Цель: получить ТОЧНЫЕ данные - название, ИНН, сайт
+        # Эти данные будут использоваться во ВСЕХ последующих запросах
+        # =================================================================
+
+        confirmed_name = None      # Подтвержденное название компании
+        confirmed_inn = inn        # Подтвержденный ИНН
+        confirmed_website = company_website  # Подтвержденный сайт
+        egrul_data = None
+
+        # ШАГ 1.1: Если есть сайт - парсим его для получения юр. данных
+        if company_website:
             try:
-                logger.info("Шаг 0: Извлечение юридической информации с сайта")
+                logger.info("Шаг 1.1: Извлечение юридической информации с сайта")
                 legal_info = website_parser.extract_legal_info(company_website)
 
                 if legal_info.get("inn"):
-                    inn = legal_info["inn"]
-                    logger.info(f"Найден ИНН на сайте: {inn}")
+                    confirmed_inn = legal_info["inn"]
+                    logger.info(f"ИНН с сайта: {confirmed_inn}")
 
                 if legal_info.get("company_name"):
-                    # Название с сайта имеет приоритет над названием из запроса
-                    website_company_name = legal_info["company_name"]
-                    logger.info(f"Найдено название компании на сайте: {website_company_name}")
-                    # Используем название с сайта если оно более полное (содержит форму собственности)
-                    if any(form in website_company_name.upper() for form in ['ООО', 'АО', 'ЗАО', 'ПАО', 'ИП']):
-                        company_name = website_company_name
+                    confirmed_name = legal_info["company_name"]
+                    logger.info(f"Название компании с сайта: {confirmed_name}")
             except Exception as e:
                 logger.warning(f"Ошибка извлечения юридической информации с сайта: {e}")
 
-        # ШАГ 1: ПОИСК КОМПАНИИ ЧЕРЕЗ PERPLEXITY (если нет ИНН после парсинга сайта)
-        logger.info("Шаг 1/6: Поиск компании в интернете (Perplexity)")
-
-        # Если уже есть ИНН - используем его, иначе ищем через Perplexity
-        if not inn:
+        # ШАГ 1.2: Если есть ИНН - получаем данные из ЕГРЮЛ (DaData)
+        if confirmed_inn:
             try:
-                company_search = perplexity_service.find_company_with_inn(company_name)
-
-                if company_search.get("found") and company_search.get("variants"):
-                    # Берем первый вариант (наиболее релевантный)
-                    first_variant = company_search["variants"][0]
-                    inn = first_variant.get("inn")
-                    perplexity_company_name = first_variant.get("short_name") or first_variant.get("name")
-
-                    logger.info(f"Perplexity нашел: {perplexity_company_name}, ИНН: {inn}")
-                    # Используем название от Perplexity только если не нашли на сайте
-                    if not company_name or not any(form in company_name.upper() for form in ['ООО', 'АО', 'ЗАО', 'ПАО', 'ИП']):
-                        company_name = perplexity_company_name
-                else:
-                    logger.warning("Perplexity не нашел компанию, продолжаем без ИНН")
-            except Exception as e:
-                logger.error(f"Ошибка поиска через Perplexity: {e}")
-                # Продолжаем без ИНН
-
-        # ШАГ 2: ОБОГАЩЕНИЕ ДАННЫМИ ИЗ ЕГРЮЛ (если есть ИНН)
-        egrul_data = None
-        if inn:
-            try:
-                logger.info("Шаг 2/6: Обогащение данными из ЕГРЮЛ (DaData)")
-                egrul_data = dadata_service.find_company_by_inn(inn)
+                logger.info("Шаг 1.2: Получение данных из ЕГРЮЛ (DaData)")
+                egrul_data = dadata_service.find_company_by_inn(confirmed_inn)
 
                 if egrul_data:
-                    # Используем официальное название из ЕГРЮЛ
-                    company_name = egrul_data["short_name"] or egrul_data["full_name"]
-                    logger.info(f"DaData подтвердил: {company_name}")
+                    # ЕГРЮЛ - официальный источник, его данные приоритетны
+                    confirmed_name = egrul_data["short_name"] or egrul_data["full_name"]
+                    logger.info(f"ЕГРЮЛ подтвердил: {confirmed_name}")
             except Exception as e:
                 logger.error(f"Ошибка получения данных из DaData: {e}")
-                # Продолжаем без DaData
 
-        # Если есть ИНН, но DaData не вернул данные - пробуем Perplexity по ИНН
-        if inn and not company_name:
+        # ШАГ 1.3: Если нет ИНН - ищем компанию через Perplexity
+        if not confirmed_inn and (company_name or company_website):
             try:
-                logger.info("DaData не нашел компанию, пробуем Perplexity по ИНН")
-                company_search = perplexity_service.find_company_with_inn(inn)
+                search_query = company_name or company_website
+                logger.info(f"Шаг 1.3: Поиск компании через Perplexity: {search_query}")
+                company_search = perplexity_service.find_company_with_inn(search_query)
 
                 if company_search.get("found") and company_search.get("variants"):
                     first_variant = company_search["variants"][0]
-                    company_name = first_variant.get("short_name") or first_variant.get("name")
-                    logger.info(f"Perplexity нашел по ИНН: {company_name}")
+                    confirmed_inn = first_variant.get("inn")
+                    if not confirmed_name:
+                        confirmed_name = first_variant.get("short_name") or first_variant.get("name")
+                    # Также получаем сайт если его нет
+                    if not confirmed_website and first_variant.get("website"):
+                        confirmed_website = first_variant["website"]
+
+                    logger.info(f"Perplexity нашел: {confirmed_name}, ИНН: {confirmed_inn}")
+
+                    # Теперь подтверждаем через ЕГРЮЛ
+                    if confirmed_inn and not egrul_data:
+                        try:
+                            egrul_data = dadata_service.find_company_by_inn(confirmed_inn)
+                            if egrul_data:
+                                confirmed_name = egrul_data["short_name"] or egrul_data["full_name"]
+                                logger.info(f"ЕГРЮЛ подтвердил: {confirmed_name}")
+                        except Exception as e:
+                            logger.error(f"Ошибка подтверждения через DaData: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка поиска через Perplexity: {e}")
+
+        # ШАГ 1.4: Если ИНН есть, но название не найдено - пробуем Perplexity по ИНН
+        if confirmed_inn and not confirmed_name:
+            try:
+                logger.info("Шаг 1.4: Поиск названия по ИНН через Perplexity")
+                company_search = perplexity_service.find_company_with_inn(confirmed_inn)
+
+                if company_search.get("found") and company_search.get("variants"):
+                    first_variant = company_search["variants"][0]
+                    confirmed_name = first_variant.get("short_name") or first_variant.get("name")
+                    if not confirmed_website and first_variant.get("website"):
+                        confirmed_website = first_variant["website"]
+                    logger.info(f"Perplexity нашел по ИНН: {confirmed_name}")
             except Exception as e:
                 logger.error(f"Ошибка поиска через Perplexity по ИНН: {e}")
 
-        # Если нет названия компании - возвращаем ошибку
-        if not company_name:
+        # Финальная проверка - должно быть хотя бы название
+        if not confirmed_name:
+            # Используем исходное название как fallback
+            confirmed_name = company_name
+
+        if not confirmed_name:
             return f"""😔 К сожалению, не удалось найти компанию "{query}"
 
 Попробуйте:
@@ -134,38 +151,52 @@ class SalesAnalyzer:
 • Указать ИНН (10 или 12 цифр)
 • Попробовать английское название (если международная компания)"""
 
-        # ШАГ 3: ПОИСК ОНЛАЙН-ПРИСУТСТВИЯ
-        logger.info("Шаг 3/6: Поиск сайта и соцсетей (Perplexity)")
-        online_presence = perplexity_service.find_online_presence(company_name, inn)
+        # =================================================================
+        # ЭТАП 2: СБОР ИНФОРМАЦИИ О ПОДТВЕРЖДЕННОЙ КОМПАНИИ
+        # Используем confirmed_name, confirmed_inn, confirmed_website
+        # =================================================================
 
-        # Если сайт был передан заранее - используем его (приоритет над найденным)
-        if company_website:
-            logger.info(f"Используем переданный сайт: {company_website}")
-            online_presence["website"] = company_website
+        logger.info(f"=== КОМПАНИЯ ИДЕНТИФИЦИРОВАНА ===")
+        logger.info(f"Название: {confirmed_name}")
+        logger.info(f"ИНН: {confirmed_inn}")
+        logger.info(f"Сайт: {confirmed_website}")
+        logger.info(f"=================================")
 
-        # ШАГ 4: ПАРСИНГ КОНТАКТОВ С САЙТА
-        logger.info("Шаг 4/6: Парсинг контактов с сайта")
+        # ШАГ 2.1: ПОИСК ОНЛАЙН-ПРИСУТСТВИЯ (если сайт еще не известен)
+        logger.info("Шаг 2/5: Поиск сайта и соцсетей")
+        online_presence = {}
+        if not confirmed_website:
+            online_presence = perplexity_service.find_online_presence(confirmed_name, confirmed_inn)
+            if online_presence.get("website"):
+                confirmed_website = online_presence["website"]
+                logger.info(f"Найден сайт: {confirmed_website}")
+        else:
+            online_presence = {"website": confirmed_website}
+
+        # ШАГ 2.2: ПАРСИНГ КОНТАКТОВ С САЙТА
+        logger.info("Шаг 3/5: Парсинг контактов с сайта")
         website_contacts = {}
         website_legal_info = {}
-        if online_presence.get("website"):
-            website_contacts = website_parser.parse_contacts(online_presence["website"])
-            # Также извлекаем юридическую информацию с сайта (ИНН, название)
-            website_legal_info = website_parser.extract_legal_info(online_presence["website"])
+        if confirmed_website:
+            website_contacts = website_parser.parse_contacts(confirmed_website)
+            website_legal_info = website_parser.extract_legal_info(confirmed_website)
             if website_legal_info:
                 logger.info(f"Юридическая информация с сайта: {website_legal_info}")
 
-        # ШАГ 5: ПОИСК ЛПР И БИЗНЕС-ИНФОРМАЦИИ
-        logger.info("Шаг 5/6: Поиск ЛПР и бизнес-информации (Perplexity)")
-        executives_data = perplexity_service.find_executives(company_name)
-        business_info = perplexity_service.find_business_info(company_name, inn)
+        # ШАГ 2.3: ПОИСК ЛПР И БИЗНЕС-ИНФОРМАЦИИ
+        logger.info("Шаг 4/5: Поиск ЛПР и бизнес-информации (Perplexity)")
+        # ВАЖНО: используем confirmed_name и confirmed_inn для консистентности
+        executives_data = perplexity_service.find_executives(confirmed_name)
+        business_info = perplexity_service.find_business_info(confirmed_name, confirmed_inn)
 
-        # ШАГ 6: ПОИСК НОВОСТЕЙ И МЕРОПРИЯТИЙ
-        logger.info("Шаг 6/6: Поиск новостей и мероприятий (Perplexity)")
+        # ШАГ 2.4: ПОИСК НОВОСТЕЙ И МЕРОПРИЯТИЙ
+        logger.info("Шаг 5/5: Поиск новостей и мероприятий (Perplexity)")
         # Определяем отрасль для более точного поиска мероприятий
         industry = None
         if business_info and business_info.get("business"):
             industry = business_info["business"].get("industry")
-        news_and_events = perplexity_service.find_news_and_events(company_name, inn, industry)
+        # ВАЖНО: используем confirmed_name и confirmed_inn
+        news_and_events = perplexity_service.find_news_and_events(confirmed_name, confirmed_inn, industry)
 
         # Агрегируем все данные
         aggregated_data = {
@@ -175,7 +206,12 @@ class SalesAnalyzer:
             "website_legal_info": website_legal_info,
             "executives": executives_data,
             "business_info": business_info,
-            "news_and_events": news_and_events
+            "news_and_events": news_and_events,
+            "confirmed_company": {
+                "name": confirmed_name,
+                "inn": confirmed_inn,
+                "website": confirmed_website
+            }
         }
 
         logger.info("Генерация итогового досье с помощью LLM")
