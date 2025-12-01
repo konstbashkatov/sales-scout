@@ -112,6 +112,19 @@ class SalesAnalyzer:
                 logger.error(f"Ошибка получения данных из DaData: {e}")
                 # Продолжаем без DaData
 
+        # Если есть ИНН, но DaData не вернул данные - пробуем Perplexity по ИНН
+        if inn and not company_name:
+            try:
+                logger.info("DaData не нашел компанию, пробуем Perplexity по ИНН")
+                company_search = perplexity_service.find_company_with_inn(inn)
+
+                if company_search.get("found") and company_search.get("variants"):
+                    first_variant = company_search["variants"][0]
+                    company_name = first_variant.get("short_name") or first_variant.get("name")
+                    logger.info(f"Perplexity нашел по ИНН: {company_name}")
+            except Exception as e:
+                logger.error(f"Ошибка поиска через Perplexity по ИНН: {e}")
+
         # Если нет названия компании - возвращаем ошибку
         if not company_name:
             return f"""😔 К сожалению, не удалось найти компанию "{query}"

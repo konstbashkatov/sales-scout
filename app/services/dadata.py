@@ -105,25 +105,33 @@ class DaDataService:
         Returns:
             Отформатированный словарь с данными компании
         """
+        # Безопасное извлечение вложенных данных (защита от None)
+        name_data = raw_data.get("name") or {}
+        state_data = raw_data.get("state") or {}
+        management_data = raw_data.get("management") or {}
+        address_data = raw_data.get("address") or {}
+        address_nested = address_data.get("data") or {}
+        capital_data = raw_data.get("capital") or {}
+
         return {
-            "full_name": raw_data.get("name", {}).get("full_with_opf", ""),
-            "short_name": raw_data.get("name", {}).get("short_with_opf", ""),
+            "full_name": name_data.get("full_with_opf", ""),
+            "short_name": name_data.get("short_with_opf", ""),
             "inn": raw_data.get("inn", ""),
             "kpp": raw_data.get("kpp", ""),
             "ogrn": raw_data.get("ogrn", ""),
             "okved": raw_data.get("okved", ""),
-            "status": raw_data.get("state", {}).get("status", ""),
-            "registration_date": raw_data.get("state", {}).get("registration_date"),
+            "status": state_data.get("status", ""),
+            "registration_date": state_data.get("registration_date"),
             "director": {
-                "name": raw_data.get("management", {}).get("name", ""),
-                "post": raw_data.get("management", {}).get("post", "Генеральный директор")
+                "name": management_data.get("name", ""),
+                "post": management_data.get("post", "Генеральный директор")
             },
             "address": {
-                "full": raw_data.get("address", {}).get("value", ""),
-                "region": raw_data.get("address", {}).get("data", {}).get("region", ""),
-                "city": raw_data.get("address", {}).get("data", {}).get("city", ""),
+                "full": address_data.get("value", ""),
+                "region": address_nested.get("region", ""),
+                "city": address_nested.get("city", ""),
             },
-            "capital": raw_data.get("capital", {}).get("value"),
+            "capital": capital_data.get("value"),
             "employee_count": raw_data.get("employee_count"),
         }
 
