@@ -26,6 +26,32 @@ def extract_inn(text: str) -> str:
     return match.group(0) if match else None
 
 
+def extract_url(text: str) -> str:
+    """
+    Извлечение URL из текста сообщения
+
+    Args:
+        text: Текст сообщения от пользователя
+
+    Returns:
+        URL или None если не найден
+    """
+    # Паттерн для URL
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+    match = re.search(url_pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(0).rstrip('.,;:!?)')
+
+    # Также проверяем URL без протокола (например: mayak-spb.ru)
+    domain_pattern = r'\b([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b(/[^\s]*)?'
+    match = re.search(domain_pattern, text)
+    if match:
+        url = match.group(0).rstrip('.,;:!?)')
+        return f"https://{url}"
+
+    return None
+
+
 def is_company_query(text: str) -> bool:
     """
     Проверка что сообщение содержит запрос о компании
@@ -42,6 +68,10 @@ def is_company_query(text: str) -> bool:
 
     # Если есть ИНН - это точно запрос
     if extract_inn(text):
+        return True
+
+    # Если есть URL - это тоже запрос
+    if extract_url(text):
         return True
 
     # Если сообщение длиннее 2 символов - считаем что это название компании
@@ -109,11 +139,25 @@ async def handle_bitrix_message(webhook_data: Dict):
 
         # Определяем тип запроса
         inn = extract_inn(text)
+        url = extract_url(text)
+
+        # Определяем что передано
+        company_name_query = None
+        company_website = None
 
         if inn:
             # Поиск по ИНН
             logger.info(f"Найден ИНН: {inn}")
             company_identifier = inn
+        elif url:
+            # Передан URL - используем его как сайт компании
+            company_website = url
+            # Если в тексте есть что-то кроме URL - это название компании
+            text_without_url = text.replace(url, '').strip()
+            if text_without_url and len(text_without_url) > 2:
+                company_name_query = text_without_url
+            logger.info(f"Найден URL: {url}, название: {company_name_query}")
+            company_identifier = url
         else:
             # Поиск по названию
             company_name_query = text.strip()
@@ -125,6 +169,13 @@ async def handle_bitrix_message(webhook_data: Dict):
             if inn:
                 dossier = await sales_analyzer.create_company_dossier(inn=inn)
                 feedback_id = inn
+            elif company_website:
+                # Если есть сайт - передаем его, название может быть None
+                dossier = await sales_analyzer.create_company_dossier(
+                    company_name=company_name_query,
+                    company_website=company_website
+                )
+                feedback_id = company_website
             else:
                 dossier = await sales_analyzer.create_company_dossier(company_name=company_name_query)
                 # Для кнопок оценки используем название (если ИНН не был найден)
